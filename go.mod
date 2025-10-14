@@ -46,4 +46,3 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 )
 
-replace zombiezen.com/go/nix => /home/wrouesnel/src/github.com/wrouesnel/go-nix
