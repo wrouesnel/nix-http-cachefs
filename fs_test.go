@@ -45,7 +45,7 @@ func (s *FsSuite) TestGetStoreDir(c *C) {
 	c.Assert(s.fs.getStoreDir(), Equals, "/nix/store")
 }
 
-// TestGetNarInfoAndNarFile test we're parsing nar's correctly
+// TestGetNarInfoAndNarFile test we're parsing nar's correctly.
 func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
 	ninfo, err := s.fs.getNarInfo(wellknownPublicPath)
 	c.Assert(err, IsNil)

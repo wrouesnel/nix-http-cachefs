@@ -159,7 +159,7 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*nixtypes.NarInfo, error) {
 	return ninfo, nil
 }
 
-// getNar makes a nar stored on a binary cache available as a seekable binary file
+// getNar makes a nar stored on a binary cache available as a seekable binary file.
 func (fs *nixHttpCacheFs) getNar(ninfo *nixtypes.NarInfo) (*cachedFile, error) {
 	fs.debugLog("getNar", ninfo.StorePath)
 

@@ -1,0 +1,44 @@
+---
+name: Release
+on:
+  push:
+    tags:
+      - r*
+
+jobs:
+  integration:
+    uses: ./.github/workflows/integration.yml
+
+  generate-release-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      release-matrix: ${{ steps.generate-matrix.outputs.release-matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25"
+
+      - name: Generate Release Matrix
+        id: generate-matrix
+        run: go run mage.go githubReleaseMatrix
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: release
+          path: release
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            release/*

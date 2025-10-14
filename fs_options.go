@@ -1,8 +1,9 @@
 package nix_http_cachefs
 
 import (
-	"github.com/jdxcode/netrc"
 	"net/http"
+
+	"github.com/jdxcode/netrc"
 )
 
 type options struct {
