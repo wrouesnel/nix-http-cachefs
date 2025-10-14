@@ -1,9 +1,12 @@
 package nix_http_cachefs
 
 import (
+	"encoding/json"
+	"io"
 	"net/url"
 	"testing"
 
+	"github.com/nix-community/go-nix/pkg/derivation"
 	"github.com/samber/lo"
 	. "gopkg.in/check.v1"
 	"zombiezen.com/go/nix/nar"
@@ -34,6 +37,7 @@ func (s *FsSuite) TestGetStoreDir(c *C) {
 	c.Assert(s.fs.getStoreDir(), Equals, "/nix/store")
 }
 
+// TestGetNarInfoAndNarFile test we're parsing nar's correctly
 func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
 	ninfo := s.fs.getNarInfo(wellknownPublicPath)
 	c.Assert(ninfo, Not(IsNil))
@@ -57,4 +61,31 @@ func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
 		c.Assert(err, IsNil)
 		c.Logf("%v %v %v", dentry.Type().String(), info.Size(), dentry.Name())
 	}
+}
+
+// TestGetNarInfoAndNarFile test we're parsing drv files correctly.
+func (s *FsSuite) TestGetNarInfoAndNarDrvFile(c *C) {
+	ninfo := s.fs.getNarInfo(wellknownDrvPath)
+	c.Assert(ninfo, Not(IsNil))
+
+	narchive, err := s.fs.getNar(ninfo)
+	c.Assert(err, IsNil)
+	c.Assert(narchive, Not(IsNil))
+
+	// Let's check the nar is actually usable since it should be a locally cached object on
+	// disk now.
+	// Let's check the nar is actually usable since it should be a locally cached object on
+	// disk now.
+	listing, err := nar.List(narchive)
+	c.Assert(err, IsNil)
+	c.Assert(listing, Not(IsNil))
+	// drv's are weird - you can't list them, they just exist at the root of the Nar file
+	drvReader := io.NewSectionReader(narchive, listing.Root.Header.ContentOffset, listing.Root.Header.Size)
+	c.Assert(err, IsNil)
+	drv, err := derivation.ReadDerivation(drvReader)
+	c.Assert(err, IsNil)
+	drvJson, err := json.MarshalIndent(drv, "", "  ")
+	c.Assert(err, IsNil)
+	c.Logf("%s\n", string(drvJson))
+
 }
