@@ -2,10 +2,8 @@ package nix_http_cachefs
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
-	"github.com/mholt/archives"
-	"github.com/spf13/afero"
-	"github.com/wrouesnel/nix-sigman/pkg/nixtypes"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,12 +12,20 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mholt/archives"
+	"github.com/spf13/afero"
+	"github.com/wrouesnel/nix-sigman/pkg/nixtypes"
+	"zombiezen.com/go/nix/nar"
 )
 
 type nixHttpCacheFs struct {
 	cacheUrl *url.URL
 	opts     *options
 	storeDir string
+	// TODO: cached tracks the number of references to an opened NAR file to avoid redownloading it
+	// TODO: this would also be a good way to assign inode numbers to use with bazil fuse.
+	// cached map[*cachedFile]atomic.Int64
 }
 
 // NewNixHttpCacheFs instantiates a new Nix HTTP Binary Cache filesystem using
@@ -107,19 +113,19 @@ func (fs *nixHttpCacheFs) newRequest(method, uri string, body io.Reader) (*http.
 }
 
 // getNarInfo retrieves a narinfo file for the given store path.
-func (fs *nixHttpCacheFs) getNarInfo(name string) *nixtypes.NarInfo {
+func (fs *nixHttpCacheFs) getNarInfo(name string) (*nixtypes.NarInfo, error) {
 	fs.debugLog("getNarInfo", name)
-	withErr := func(e error) *nixtypes.NarInfo {
+	withErr := func(e error) (*nixtypes.NarInfo, error) {
 		fs.errorLog("getNarInfo", e)
-		return nil
+		return nil, e
 	}
 
 	// Remove the store path from the name
 	narPathWithoutPrefix, _ := strings.CutPrefix(name, fs.getStoreDir())
 	// Remove any nested paths
 	splitPath := strings.Split(narPathWithoutPrefix, string(os.PathSeparator))
-	if len(splitPath) > 2 {
-		return nil
+	if len(splitPath) < 2 {
+		return withErr(errors.New("name is not valid"))
 	}
 
 	// Cut the first part of the path to get what should be the narHash
@@ -150,7 +156,7 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) *nixtypes.NarInfo {
 		return withErr(err)
 	}
 
-	return ninfo
+	return ninfo, nil
 }
 
 // getNar makes a nar stored on a binary cache available as a seekable binary file
@@ -236,23 +242,58 @@ func (fs *nixHttpCacheFs) MkdirAll(path string, perm os.FileMode) error {
 }
 
 func (fs *nixHttpCacheFs) Open(name string) (afero.File, error) {
-	//TODO implement me
-	panic("implement me")
+	return fs.OpenFile(name, os.O_RDONLY, os.FileMode(777))
 }
 
 func (fs *nixHttpCacheFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	// TODO: handle the opening flags (restrict to usable)
-	panic("implement me")
+	withErr := func(e error) (afero.File, error) {
+		fs.errorLog("OpenFile", e)
+		return nil, e
+	}
+	// Open the narInfo file
+	ninfo, err := fs.getNarInfo(name)
+	if err != nil {
+		return withErr(err)
+	}
+	// Open the narchive
+	narchive, err := fs.getNar(ninfo)
+	if err != nil {
+		return withErr(err)
+	}
+
+	// Get a listing
+	listing, err := nar.List(narchive)
+	if err != nil {
+		return withErr(err)
+	}
+
+	// Resolve the name within the archive, if any.
+	nameWithinArchive, _ := strings.CutPrefix(name, ninfo.StorePath)
+	nameWithinArchive, _ = strings.CutPrefix(nameWithinArchive, "/")
+	if nameWithinArchive == "" {
+		nameWithinArchive = "." // this is a quirk of the filename handling
+	}
+
+	// The upstream library implements an FS for us...but returns a private
+	// file type and an iofs public type, which means we don't have enough
+	// methods to support afero like we'd like to.
+	narfs, err := nar.NewFS(narchive, listing)
+	if err != nil {
+		return withErr(err)
+	}
+	fh, err := narfs.Open(nameWithinArchive)
+	if err != nil {
+		return nil, err
+	}
+	return &narchivedFile{handle: fh}, nil
 }
 
 func (fs *nixHttpCacheFs) Remove(name string) error {
-	//TODO implement me
-	panic("implement me")
+	return syscall.EPERM
 }
 
 func (fs *nixHttpCacheFs) RemoveAll(path string) error {
-	//TODO implement me
-	panic("implement me")
+	return syscall.EPERM
 }
 
 func (fs *nixHttpCacheFs) Rename(oldname, newname string) error {
@@ -261,8 +302,12 @@ func (fs *nixHttpCacheFs) Rename(oldname, newname string) error {
 
 func (fs *nixHttpCacheFs) Stat(name string) (os.FileInfo, error) {
 	// Stat is reasonably complicated to do because we have to unpack the actual
-	// nar file to know what we're stating.
-	panic("implement me")
+	// nar file to know what we're stating. So let Open handle it.
+	fh, err := fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return fh.Stat()
 }
 
 func (fs *nixHttpCacheFs) Name() string {

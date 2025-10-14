@@ -1,9 +1,12 @@
 package nix_http_cachefs
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/url"
+	"path"
 	"testing"
 
 	"github.com/nix-community/go-nix/pkg/derivation"
@@ -24,6 +27,11 @@ var _ = Suite(&FsSuite{})
 const wellknownPublicPath = "/nix/store/2kgif7n5hi16qhkrnjnv5swnq9aq3qhj-gcc-14-20241116-libgcc"
 const wellknownDrvPath = "/nix/store/ci1f3qvj2i3bgr2wibfxl52cfw0wfks6-gcc-14-20241116.drv"
 
+var knownHashes = map[string]string{
+	path.Join(wellknownPublicPath, "lib/libgcc_s.so.1"): "75cd8476ad40708ee23b40866dd6c56f43d11475c8e2e659cb5ce88e588e43c7",
+	wellknownDrvPath: "6d2e0fccc627c62797f094eba9831e1d61918a08c2a2929f1c5502553f21c59f",
+}
+
 func (s *FsSuite) SetUpSuite(c *C) {
 	cacheUrl := lo.Must(url.Parse("https://cache.nixos.org/"))
 	s.fs = NewNixHttpCacheFs(cacheUrl, ErrorLogger(func(msg string) {
@@ -39,7 +47,8 @@ func (s *FsSuite) TestGetStoreDir(c *C) {
 
 // TestGetNarInfoAndNarFile test we're parsing nar's correctly
 func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
-	ninfo := s.fs.getNarInfo(wellknownPublicPath)
+	ninfo, err := s.fs.getNarInfo(wellknownPublicPath)
+	c.Assert(err, IsNil)
 	c.Assert(ninfo, Not(IsNil))
 
 	narchive, err := s.fs.getNar(ninfo)
@@ -54,7 +63,7 @@ func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
 	fs, err := nar.NewFS(narchive, listing)
 	c.Assert(err, IsNil)
 
-	dentries, err := fs.ReadDir(".")
+	dentries, err := fs.ReadDir("lib")
 	c.Assert(err, IsNil)
 	for _, dentry := range dentries {
 		info, err := dentry.Info()
@@ -65,7 +74,8 @@ func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
 
 // TestGetNarInfoAndNarFile test we're parsing drv files correctly.
 func (s *FsSuite) TestGetNarInfoAndNarDrvFile(c *C) {
-	ninfo := s.fs.getNarInfo(wellknownDrvPath)
+	ninfo, err := s.fs.getNarInfo(wellknownDrvPath)
+	c.Assert(err, IsNil)
 	c.Assert(ninfo, Not(IsNil))
 
 	narchive, err := s.fs.getNar(ninfo)
@@ -87,5 +97,53 @@ func (s *FsSuite) TestGetNarInfoAndNarDrvFile(c *C) {
 	drvJson, err := json.MarshalIndent(drv, "", "  ")
 	c.Assert(err, IsNil)
 	c.Logf("%s\n", string(drvJson))
+}
 
+func (s *FsSuite) TestReadFile(c *C) {
+	filename := path.Join(wellknownPublicPath, "lib/libgcc_s.so.1")
+	f, err := s.fs.Open(filename)
+	c.Assert(err, IsNil)
+
+	// Hash the file and check it matches.
+	hasher := sha256.New()
+	_, err = io.Copy(hasher, f)
+	c.Assert(err, IsNil)
+	readHash := hex.EncodeToString(hasher.Sum(nil))
+	c.Assert(readHash, Equals, knownHashes[filename])
+}
+
+func (s *FsSuite) TestReadDerivationFile(c *C) {
+	f, err := s.fs.Open(wellknownDrvPath)
+	c.Assert(err, IsNil)
+
+	// Hash the file and check it matches.
+	hasher := sha256.New()
+	_, err = io.Copy(hasher, f)
+	c.Assert(err, IsNil)
+	readHash := hex.EncodeToString(hasher.Sum(nil))
+	c.Assert(readHash, Equals, knownHashes[wellknownDrvPath])
+}
+
+func (s *FsSuite) TestReadDirDir(c *C) {
+	filename := path.Join(wellknownPublicPath, "lib")
+	f, err := s.fs.Open(filename)
+	c.Assert(err, IsNil)
+
+	dirNames, err := f.Readdirnames(1000)
+	c.Assert(err, IsNil)
+	for _, name := range dirNames {
+		c.Log(name)
+	}
+
+	expectedNames := []string{"libgcc_s.so", "libgcc_s.so.1"}
+	c.Assert(lo.ElementsMatch(dirNames, expectedNames), Equals, true, Commentf("%v != %v", dirNames, expectedNames))
+}
+
+func (s *FsSuite) TestReadDirFile(c *C) {
+	filename := path.Join(wellknownPublicPath, "lib/libgcc_s.so.1")
+	f, err := s.fs.Open(filename)
+	c.Assert(err, IsNil)
+	dirNames, err := f.Readdirnames(1000)
+	c.Assert(err, Not(IsNil))
+	c.Assert(dirNames, IsNil)
 }

@@ -6,7 +6,7 @@ require (
 	github.com/jdxcode/netrc v1.0.0
 	github.com/mholt/archives v0.1.5
 	github.com/nix-community/go-nix v0.0.0-20250101154619-4bdde671e0a1
-	github.com/samber/lo v1.49.1
+	github.com/samber/lo v1.52.0
 	github.com/spf13/afero v1.15.0
 	github.com/wrouesnel/nix-sigman v0.0.0-20251013230557-4f86e0aace66
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c
@@ -35,3 +35,5 @@ require (
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )
+
+replace zombiezen.com/go/nix => /home/wrouesnel/src/github.com/wrouesnel/go-nix
