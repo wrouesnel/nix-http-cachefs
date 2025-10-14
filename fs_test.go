@@ -1,10 +1,11 @@
 package nix_http_cachefs
 
 import (
-	"github.com/samber/lo"
-	. "gopkg.in/check.v1"
 	"net/url"
 	"testing"
+
+	"github.com/samber/lo"
+	. "gopkg.in/check.v1"
 	"zombiezen.com/go/nix/nar"
 )
 
@@ -49,12 +50,11 @@ func (s *FsSuite) TestGetNarInfoAndNarFile(c *C) {
 	fs, err := nar.NewFS(narchive, listing)
 	c.Assert(err, IsNil)
 
-	dentries, err := fs.ReadDir("/")
+	dentries, err := fs.ReadDir(".")
+	c.Assert(err, IsNil)
 	for _, dentry := range dentries {
-		tmpl := "%v %v %v\n"
-		if dentry.IsDir() {
-			tmpl = "d %v %v %v\n"
-		}
-		c.Logf(tmpl, dentry.Name(), dentry.Type().String())
+		info, err := dentry.Info()
+		c.Assert(err, IsNil)
+		c.Logf("%v %v %v", dentry.Type().String(), info.Size(), dentry.Name())
 	}
 }

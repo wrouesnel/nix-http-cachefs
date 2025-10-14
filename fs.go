@@ -207,10 +207,16 @@ func (fs *nixHttpCacheFs) getNar(ninfo *nixtypes.NarInfo) (*cachedFile, error) {
 		if err != nil {
 			return withErr(err)
 		}
+		defer narReader.Close()
 	}
 
 	// Copy the nar to the cache file
 	if _, err := io.Copy(cacheFile, narReader); err != nil {
+		return withErr(err)
+	}
+
+	// Reset the cache file to the start
+	if _, err := cacheFile.Seek(0, io.SeekStart); err != nil {
 		return withErr(err)
 	}
 
