@@ -12,11 +12,11 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.52.0
 	github.com/spf13/afero v1.15.0
-	github.com/wrouesnel/nix-sigman v0.0.0-20251013230557-4f86e0aace66
-	golang.org/x/mod v0.27.0
+	github.com/wrouesnel/nix-sigman v0.0.0-20251014105522-6b9103301d88
+	golang.org/x/mod v0.29.0
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c
 	gopkg.in/yaml.v3 v3.0.1
-	zombiezen.com/go/nix v0.0.0-20240811171638-2409f347632d
+	zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de
 )
 
 require (
@@ -35,7 +35,7 @@ require (
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
 	github.com/nwaples/rardecode v1.1.3 // indirect
-	github.com/nwaples/rardecode/v2 v2.2.0 // indirect
+	github.com/nwaples/rardecode/v2 v2.2.1 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -43,6 +43,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/text v0.30.0 // indirect
 )
 
+replace zombiezen.com/go/nix => github.com/wrouesnel/go-nix v0.0.0-20251014052133-d044f6f931c6

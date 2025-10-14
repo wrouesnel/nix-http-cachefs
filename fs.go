@@ -270,7 +270,7 @@ func (fs *nixHttpCacheFs) OpenFile(name string, flag int, perm os.FileMode) (afe
 	// Resolve the name within the archive, if any.
 	nameWithinArchive, _ := strings.CutPrefix(name, ninfo.StorePath)
 	// Might be a drv file in which case the above removal doesn't actually fully remove it.
-	nameWithinArchive, _ = strings.CutPrefix(nameWithinArchive, ".drv")
+	//nameWithinArchive, _ = strings.CutPrefix(nameWithinArchive, ".drv")
 	nameWithinArchive, _ = strings.CutPrefix(nameWithinArchive, "/")
 	if nameWithinArchive == "" {
 		nameWithinArchive = "." // this is a quirk of the filename handling
