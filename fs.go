@@ -209,58 +209,75 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolvedUrl := ninfo.cacheUrl.ResolveReference(narUrl)
-	fs.debugLog("HTTP Request", http.MethodGet, resolvedUrl.String())
 
-	req, err := fs.newRequest(http.MethodGet, resolvedUrl.String(), nil)
-	if err != nil {
-		return withErr(err)
-	}
+	var cacheFile *cachedFile
+	var errs error
+	for _, cacheUrl := range append([]*url.URL{ninfo.cacheUrl}, fs.cacheUrls...) {
+		resolvedUrl := cacheUrl.ResolveReference(narUrl)
+		fs.debugLog("HTTP Request", http.MethodGet, resolvedUrl.String())
 
-	resp, err := fs.client().Do(req)
-	if err != nil {
-		return withErr(err)
-	}
-
-	defer resp.Body.Close()
-	narReader := resp.Body
-
-	// Ensure we decompress the nar into the cache file
-	var compressor archives.Decompressor
-	switch ninfo.ninfo.Compression {
-	case "xz":
-		compressor = new(archives.Xz)
-	case "bzip2":
-		compressor = new(archives.Bz2)
-	case "gzip":
-		compressor = new(archives.Gz)
-	case "zstd":
-		compressor = new(archives.Zstd)
-	case "", "none":
-		compressor = nil
-	}
-
-	cacheFile, err := NewCacheFile(path.Base(ninfo.ninfo.StorePath))
-	if err != nil {
-		return withErr(err)
-	}
-
-	if compressor != nil {
-		narReader, err = compressor.OpenReader(narReader)
+		req, err := fs.newRequest(http.MethodGet, resolvedUrl.String(), nil)
 		if err != nil {
+			multierr.Append(errs, err)
+			continue
+		}
+
+		resp, err := fs.client().Do(req)
+		if err != nil {
+			multierr.Append(errs, err)
+			continue
+		}
+
+		defer resp.Body.Close()
+		narReader := resp.Body
+
+		// Ensure we decompress the nar into the cache file
+		var compressor archives.Decompressor
+		switch ninfo.ninfo.Compression {
+		case "xz":
+			compressor = new(archives.Xz)
+		case "bzip2":
+			compressor = new(archives.Bz2)
+		case "gzip":
+			compressor = new(archives.Gz)
+		case "zstd":
+			compressor = new(archives.Zstd)
+		case "", "none":
+			compressor = nil
+		}
+
+		cacheFile, err = NewCacheFile(path.Base(ninfo.ninfo.StorePath))
+		if err != nil {
+			// If this fails its an entirely local error we won't recover from.
 			return withErr(err)
 		}
-		defer narReader.Close()
+
+		if compressor != nil {
+			narReader, err = compressor.OpenReader(narReader)
+			if err != nil {
+				multierr.Append(errs, err)
+				continue
+			}
+			defer narReader.Close()
+		}
+
+		// Copy the nar to the cache file
+		if _, err := io.Copy(cacheFile, narReader); err != nil {
+			// This can be a product of a failed cache server, so we can retry.
+			multierr.Append(errs, err)
+			cacheFile = nil
+			continue
+		}
+
+		// Reset the cache file to the start
+		if _, err := cacheFile.Seek(0, io.SeekStart); err != nil {
+			// If this fails its an entirely local error we won't recover from.
+			return withErr(err)
+		}
 	}
 
-	// Copy the nar to the cache file
-	if _, err := io.Copy(cacheFile, narReader); err != nil {
-		return withErr(err)
-	}
-
-	// Reset the cache file to the start
-	if _, err := cacheFile.Seek(0, io.SeekStart); err != nil {
-		return withErr(err)
+	if cacheFile == nil {
+		return withErr(errs)
 	}
 
 	return cacheFile, nil
