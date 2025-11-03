@@ -73,7 +73,12 @@ func (fs *nixHttpCacheFs) debugLog(msg string, values ...string) {
 
 func (fs *nixHttpCacheFs) errorLog(msg string, e error) {
 	if fs.opts.errorFn != nil {
-		fs.opts.errorFn(fmt.Sprintf("%v: %v", msg, e.Error()))
+		if e != nil {
+			fs.opts.errorFn(fmt.Sprintf("%v: %v", msg, e.Error()))
+		} else {
+			fs.opts.errorFn(fmt.Sprintf("%v", msg))
+		}
+
 	}
 }
 
@@ -160,26 +165,26 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 		// request the narinfo from the disk
 		req, err := fs.newRequest(http.MethodGet, ninfoUrl, nil)
 		if err != nil {
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			continue
 		}
 
 		response, err := fs.client().Do(req)
 		if err != nil {
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			continue
 		}
 
 		defer response.Body.Close()
 		ninfoResponse, err := io.ReadAll(response.Body)
 		if err != nil {
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			continue
 		}
 
 		ninfo := new(nixtypes.NarInfo)
 		if err := ninfo.UnmarshalText(ninfoResponse); err != nil {
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			continue
 		}
 		result = &ninfoWithOrigin{
@@ -218,13 +223,13 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 
 		req, err := fs.newRequest(http.MethodGet, resolvedUrl.String(), nil)
 		if err != nil {
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			continue
 		}
 
 		resp, err := fs.client().Do(req)
 		if err != nil {
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			continue
 		}
 
@@ -255,7 +260,7 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 		if compressor != nil {
 			narReader, err = compressor.OpenReader(narReader)
 			if err != nil {
-				multierr.Append(errs, err)
+				errs = multierr.Append(errs, err)
 				continue
 			}
 			defer narReader.Close()
@@ -264,7 +269,7 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 		// Copy the nar to the cache file
 		if _, err := io.Copy(cacheFile, narReader); err != nil {
 			// This can be a product of a failed cache server, so we can retry.
-			multierr.Append(errs, err)
+			errs = multierr.Append(errs, err)
 			cacheFile = nil
 			continue
 		}
