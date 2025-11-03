@@ -3,6 +3,7 @@ module github.com/wrouesnel/nix-http-cachefs
 go 1.24.4
 
 require (
+	github.com/hashicorp/go-multierror v1.1.1
 	github.com/integralist/go-findroot v0.0.0-20160518114804-ac90681525dc
 	github.com/jdxcode/netrc v1.0.0
 	github.com/magefile/mage v1.15.0
@@ -13,6 +14,7 @@ require (
 	github.com/samber/lo v1.52.0
 	github.com/spf13/afero v1.15.0
 	github.com/wrouesnel/nix-sigman v0.0.0-20251014105522-6b9103301d88
+	go.uber.org/multierr v1.11.0
 	golang.org/x/mod v0.29.0
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c
 	gopkg.in/yaml.v3 v3.0.1
@@ -27,6 +29,7 @@ require (
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect

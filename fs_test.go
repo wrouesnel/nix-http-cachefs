@@ -34,11 +34,13 @@ var knownHashes = map[string]string{
 
 func (s *FsSuite) SetUpSuite(c *C) {
 	cacheUrl := lo.Must(url.Parse("https://cache.nixos.org/"))
-	s.fs = NewNixHttpCacheFs(cacheUrl, ErrorLogger(func(msg string) {
+	fs, err := NewNixHttpCacheFs([]*url.URL{cacheUrl}, ErrorLogger(func(msg string) {
 		c.Logf("error: %s", msg)
 	}), DebugLogger(func(msg string) {
 		c.Logf("debug: %s", msg)
-	})).(*nixHttpCacheFs)
+	}))
+	c.Assert(err, IsNil)
+	s.fs = fs.(*nixHttpCacheFs)
 }
 
 func (s *FsSuite) TestGetStoreDir(c *C) {

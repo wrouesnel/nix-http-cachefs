@@ -16,23 +16,30 @@ import (
 	"github.com/mholt/archives"
 	"github.com/spf13/afero"
 	"github.com/wrouesnel/nix-sigman/pkg/nixtypes"
+	"go.uber.org/multierr"
 	"zombiezen.com/go/nix/nar"
 )
 
 type nixHttpCacheFs struct {
-	cacheUrl *url.URL
-	opts     *options
-	storeDir string
+	cacheUrls []*url.URL
+	opts      *options
+	storeDir  string
 	// TODO: cached tracks the number of references to an opened NAR file to avoid redownloading it
 	// TODO: this would also be a good way to assign inode numbers to use with bazil fuse.
 	// cached map[*cachedFile]atomic.Int64
+}
+
+// ninfoWithOrigin retains the originating cache of a ninfo file.
+type ninfoWithOrigin struct {
+	cacheUrl *url.URL
+	ninfo    *nixtypes.NarInfo
 }
 
 // NewNixHttpCacheFs instantiates a new Nix HTTP Binary Cache filesystem using
 // the given cache URL and netrc file for authentication (credentials can also
 // be supplied in the URL). NixHttpCacheFs filesystems are read-only.
 // TODO: actually they could be writeable with a little magic...
-func NewNixHttpCacheFs(cacheUrl *url.URL, opt ...Opt) afero.Fs {
+func NewNixHttpCacheFs(cacheUrls []*url.URL, opt ...Opt) (afero.Fs, error) {
 	opts := &options{}
 	for _, o := range opt {
 		o(opts)
@@ -42,10 +49,20 @@ func NewNixHttpCacheFs(cacheUrl *url.URL, opt ...Opt) afero.Fs {
 		opts.client = http.DefaultClient
 	}
 
-	return &nixHttpCacheFs{
-		cacheUrl: cacheUrl,
-		opts:     opts,
+	if len(cacheUrls) == 0 {
+		return nil, errors.New("must specify at least 1 cache URL")
 	}
+
+	for idx, cacheUrl := range cacheUrls {
+		if cacheUrl == nil {
+			return nil, fmt.Errorf("cache url at position %v is nil - this is invalid", idx)
+		}
+	}
+
+	return &nixHttpCacheFs{
+		cacheUrls: cacheUrls,
+		opts:      opts,
+	}, nil
 }
 
 func (fs *nixHttpCacheFs) debugLog(msg string, values ...string) {
@@ -64,10 +81,12 @@ func (fs *nixHttpCacheFs) client() *http.Client {
 	return fs.opts.client
 }
 
-// getStoreDir retreives the store directory from the cache if it is not already known.
+// getStoreDir retrieves the store directory from the cache if it is not already known.
+// This function will only use the *first* configured cacheUrl - it's a mistake to configure
+// multiple conflicting ones.
 func (fs *nixHttpCacheFs) getStoreDir() string {
 	if fs.storeDir == "" {
-		req, err := fs.newRequest(http.MethodGet, fs.cacheUrl.JoinPath("nix-cache-info").String(), nil)
+		req, err := fs.newRequest(http.MethodGet, fs.cacheUrls[0].JoinPath("nix-cache-info").String(), nil)
 		if err != nil {
 			return fs.storeDir
 		}
@@ -113,9 +132,9 @@ func (fs *nixHttpCacheFs) newRequest(method, uri string, body io.Reader) (*http.
 }
 
 // getNarInfo retrieves a narinfo file for the given store path.
-func (fs *nixHttpCacheFs) getNarInfo(name string) (*nixtypes.NarInfo, error) {
+func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 	fs.debugLog("getNarInfo", name)
-	withErr := func(e error) (*nixtypes.NarInfo, error) {
+	withErr := func(e error) (*ninfoWithOrigin, error) {
 		fs.errorLog("getNarInfo", e)
 		return nil, e
 	}
@@ -131,48 +150,66 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*nixtypes.NarInfo, error) {
 	// Cut the first part of the path to get what should be the narHash
 	shortPath, _, _ := strings.Cut(splitPath[1], "-")
 
-	ninfoUrl := fs.cacheUrl.JoinPath(fmt.Sprintf("%s.narinfo", shortPath)).String()
-	fs.debugLog("HTTP Request", http.MethodGet, ninfoUrl)
+	// Try every configured cache before failing
+	var result *ninfoWithOrigin
+	var errs error
+	for _, cacheUrl := range fs.cacheUrls {
+		ninfoUrl := cacheUrl.JoinPath(fmt.Sprintf("%s.narinfo", shortPath)).String()
+		fs.debugLog("HTTP Request", http.MethodGet, ninfoUrl)
 
-	// request the narinfo from the disk
-	req, err := fs.newRequest(http.MethodGet, ninfoUrl, nil)
-	if err != nil {
-		return withErr(err)
+		// request the narinfo from the disk
+		req, err := fs.newRequest(http.MethodGet, ninfoUrl, nil)
+		if err != nil {
+			multierr.Append(errs, err)
+			continue
+		}
+
+		response, err := fs.client().Do(req)
+		if err != nil {
+			multierr.Append(errs, err)
+			continue
+		}
+
+		defer response.Body.Close()
+		ninfoResponse, err := io.ReadAll(response.Body)
+		if err != nil {
+			multierr.Append(errs, err)
+			continue
+		}
+
+		ninfo := new(nixtypes.NarInfo)
+		if err := ninfo.UnmarshalText(ninfoResponse); err != nil {
+			multierr.Append(errs, err)
+			continue
+		}
+		result = &ninfoWithOrigin{
+			cacheUrl: cacheUrl,
+			ninfo:    ninfo,
+		}
 	}
 
-	response, err := fs.client().Do(req)
-	if err != nil {
-		return withErr(err)
+	if result == nil {
+		// If we failed then return the complete multi-err for all our attempts
+		return withErr(errs)
 	}
 
-	defer response.Body.Close()
-	ninfoResponse, err := io.ReadAll(response.Body)
-	if err != nil {
-		return withErr(err)
-	}
-
-	ninfo := &nixtypes.NarInfo{}
-	if err := ninfo.UnmarshalText(ninfoResponse); err != nil {
-		return withErr(err)
-	}
-
-	return ninfo, nil
+	return result, nil
 }
 
 // getNar makes a nar stored on a binary cache available as a seekable binary file.
-func (fs *nixHttpCacheFs) getNar(ninfo *nixtypes.NarInfo) (*cachedFile, error) {
-	fs.debugLog("getNar", ninfo.StorePath)
+func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
+	fs.debugLog("getNar", ninfo.ninfo.StorePath, ninfo.cacheUrl.String())
 
 	withErr := func(e error) (*cachedFile, error) {
 		fs.errorLog("getNarInfo", e)
 		return nil, e
 	}
 
-	narUrl, err := url.Parse(ninfo.URL)
+	narUrl, err := url.Parse(ninfo.ninfo.URL)
 	if err != nil {
 		return nil, err
 	}
-	resolvedUrl := fs.cacheUrl.ResolveReference(narUrl)
+	resolvedUrl := ninfo.cacheUrl.ResolveReference(narUrl)
 	fs.debugLog("HTTP Request", http.MethodGet, resolvedUrl.String())
 
 	req, err := fs.newRequest(http.MethodGet, resolvedUrl.String(), nil)
@@ -190,7 +227,7 @@ func (fs *nixHttpCacheFs) getNar(ninfo *nixtypes.NarInfo) (*cachedFile, error) {
 
 	// Ensure we decompress the nar into the cache file
 	var compressor archives.Decompressor
-	switch ninfo.Compression {
+	switch ninfo.ninfo.Compression {
 	case "xz":
 		compressor = new(archives.Xz)
 	case "bzip2":
@@ -203,7 +240,7 @@ func (fs *nixHttpCacheFs) getNar(ninfo *nixtypes.NarInfo) (*cachedFile, error) {
 		compressor = nil
 	}
 
-	cacheFile, err := NewCacheFile(path.Base(ninfo.StorePath))
+	cacheFile, err := NewCacheFile(path.Base(ninfo.ninfo.StorePath))
 	if err != nil {
 		return withErr(err)
 	}
@@ -268,7 +305,7 @@ func (fs *nixHttpCacheFs) OpenFile(name string, flag int, perm os.FileMode) (afe
 	}
 
 	// Resolve the name within the archive, if any.
-	nameWithinArchive, _ := strings.CutPrefix(name, ninfo.StorePath)
+	nameWithinArchive, _ := strings.CutPrefix(name, ninfo.ninfo.StorePath)
 	// Might be a drv file in which case the above removal doesn't actually fully remove it.
 	//nameWithinArchive, _ = strings.CutPrefix(nameWithinArchive, ".drv")
 	nameWithinArchive, _ = strings.CutPrefix(nameWithinArchive, "/")
