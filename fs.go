@@ -195,7 +195,7 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 
 	if result == nil {
 		// If we failed then return the complete multi-err for all our attempts
-		return withErr(errs)
+		return withErr(multierr.Append(errs, errors.New("no cache URL succeeded")))
 	}
 
 	return result, nil
@@ -282,7 +282,7 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 	}
 
 	if cacheFile == nil {
-		return withErr(errs)
+		return withErr(multierr.Append(errs, errors.New("no cache URL succeeded")))
 	}
 
 	return cacheFile, nil
