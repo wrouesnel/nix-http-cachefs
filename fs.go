@@ -2,6 +2,7 @@ package nix_http_cachefs
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mholt/archives"
+	"github.com/samber/lo"
 	"github.com/spf13/afero"
 	"github.com/wrouesnel/nix-sigman/pkg/nixtypes"
 	"go.uber.org/multierr"
@@ -33,6 +35,8 @@ type nixHttpCacheFs struct {
 type ninfoWithOrigin struct {
 	cacheUrl *url.URL
 	ninfo    *nixtypes.NarInfo
+	// pathIsNinfo tracks if the requested path was literally a narinfo path.
+	pathIsNinfo bool
 }
 
 // NewNixHttpCacheFs instantiates a new Nix HTTP Binary Cache filesystem using
@@ -152,14 +156,20 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 		return withErr(errors.New("name is not valid"))
 	}
 
+	// Split the last part of the path to determine if it's a narinfo
+	pathExtComponents := strings.Split(splitPath[1], ".")
+	pathExt, hasExt := lo.Last(pathExtComponents)
 	// Cut the first part of the path to get what should be the narHash
 	shortPath, _, _ := strings.Cut(splitPath[1], "-")
 
 	// Try every configured cache before failing
 	var result *ninfoWithOrigin
 	var errs error
+	isNinfoPath := lo.Ternary(hasExt, pathExt == "narinfo", false)
 	for _, cacheUrl := range fs.cacheUrls {
-		ninfoUrl := cacheUrl.JoinPath(fmt.Sprintf("%s.narinfo", shortPath)).String()
+		var ninfoUrl string
+		ninfoUrl = cacheUrl.JoinPath(fmt.Sprintf("%s.narinfo", shortPath)).String()
+
 		fs.debugLog("HTTP Request", http.MethodGet, ninfoUrl)
 
 		// request the narinfo from the disk
@@ -188,8 +198,9 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 			continue
 		}
 		result = &ninfoWithOrigin{
-			cacheUrl: cacheUrl,
-			ninfo:    ninfo,
+			cacheUrl:    cacheUrl,
+			ninfo:       ninfo,
+			pathIsNinfo: isNinfoPath,
 		}
 	}
 
@@ -314,6 +325,27 @@ func (fs *nixHttpCacheFs) OpenFile(name string, flag int, perm os.FileMode) (afe
 	if err != nil {
 		return withErr(err)
 	}
+	// If the file is literally a .narinfo file, then allow opening that directly since a real
+	// binary cache can serve that, and it doesn't harm users at all since it's unambiguous.
+	if ninfo.pathIsNinfo {
+		// Return the narinfo file content as a virtual file
+		fh, err := NewCacheFile(path.Base(ninfo.ninfo.StorePath) + ".narinfo")
+		if err != nil {
+			return withErr(err)
+		}
+		ninfoBytes, err := ninfo.ninfo.MarshalText()
+		if err != nil {
+			return withErr(err)
+		}
+		if _, err := io.Copy(fh, bytes.NewReader(ninfoBytes)); err != nil {
+			return withErr(err)
+		}
+		if _, err := fh.Seek(0, io.SeekStart); err != nil {
+			return withErr(err)
+		}
+		return &narchivedFile{handle: fh}, nil
+	}
+
 	// Open the narchive
 	narchive, err := fs.getNar(ninfo)
 	if err != nil {

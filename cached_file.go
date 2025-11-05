@@ -3,6 +3,7 @@ package nix_http_cachefs
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"runtime"
 )
@@ -53,4 +54,9 @@ func (c *cachedFile) WriteAt(p []byte, off int64) (n int, err error) {
 
 func (c *cachedFile) ReadAt(p []byte, off int64) (n int, err error) {
 	return c.cached.ReadAt(p, off)
+}
+
+// Stat is implemented for fs.File conformity, but it is relatively meaningless.
+func (c *cachedFile) Stat() (fs.FileInfo, error) {
+	return c.cached.Stat()
 }

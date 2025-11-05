@@ -11,6 +11,7 @@ import (
 
 	"github.com/nix-community/go-nix/pkg/derivation"
 	"github.com/samber/lo"
+	"github.com/wrouesnel/nix-sigman/pkg/nixtypes"
 	. "gopkg.in/check.v1"
 	"zombiezen.com/go/nix/nar"
 )
@@ -148,4 +149,16 @@ func (s *FsSuite) TestReadDirFile(c *C) {
 	dirNames, err := f.Readdirnames(1000)
 	c.Assert(err, Not(IsNil))
 	c.Assert(dirNames, IsNil)
+}
+
+func (s *FsSuite) TestReadNarInfo(c *C) {
+	filename := wellknownPublicPath + ".narinfo"
+	f, err := s.fs.Open(filename)
+	c.Assert(err, IsNil)
+	// Decode the narinfo file
+	ninfoBytes, err := io.ReadAll(f)
+	c.Assert(err, IsNil)
+	ninfo := new(nixtypes.NarInfo)
+	err = ninfo.UnmarshalText(ninfoBytes)
+	c.Assert(err, IsNil)
 }
