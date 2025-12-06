@@ -290,6 +290,9 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 			// If this fails its an entirely local error we won't recover from.
 			return withErr(err)
 		}
+
+		// Success - break the loop
+		break
 	}
 
 	if cacheFile == nil {
