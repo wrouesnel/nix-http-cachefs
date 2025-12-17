@@ -3,6 +3,7 @@ module github.com/wrouesnel/nix-http-cachefs
 go 1.24.4
 
 require (
+	github.com/chigopher/pathlib v0.19.1
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/integralist/go-findroot v0.0.0-20160518114804-ac90681525dc
 	github.com/jdxcode/netrc v1.0.0

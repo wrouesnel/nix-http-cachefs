@@ -26,6 +26,7 @@ type nixHttpCacheFs struct {
 	cacheUrls []*url.URL
 	opts      *options
 	storeDir  string
+	client    *http.Client
 	// TODO: cached tracks the number of references to an opened NAR file to avoid redownloading it
 	// TODO: this would also be a good way to assign inode numbers to use with bazil fuse.
 	// cached map[*cachedFile]atomic.Int64
@@ -34,7 +35,8 @@ type nixHttpCacheFs struct {
 // ninfoWithOrigin retains the originating cache of a ninfo file.
 type ninfoWithOrigin struct {
 	cacheUrl *url.URL
-	ninfo    *nixtypes.NarInfo
+
+	ninfo *nixtypes.NarInfo
 	// pathIsNinfo tracks if the requested path was literally a narinfo path.
 	pathIsNinfo bool
 }
@@ -49,10 +51,6 @@ func NewNixHttpCacheFs(cacheUrls []*url.URL, opt ...Opt) (afero.Fs, error) {
 		o(opts)
 	}
 
-	if opts.client == nil {
-		opts.client = http.DefaultClient
-	}
-
 	if len(cacheUrls) == 0 {
 		return nil, errors.New("must specify at least 1 cache URL")
 	}
@@ -63,9 +61,22 @@ func NewNixHttpCacheFs(cacheUrls []*url.URL, opt ...Opt) (afero.Fs, error) {
 		}
 	}
 
+	roundTripper := http.DefaultTransport
+	if opts.roundTripper != nil {
+		roundTripper = opts.roundTripper
+	}
+
+	if opts.persistentCache != nil {
+		roundTripper = &CachingRoundTripper{
+			PersistentCache: opts.persistentCache,
+			RoundTripper:    roundTripper,
+		}
+	}
+
 	return &nixHttpCacheFs{
 		cacheUrls: cacheUrls,
 		opts:      opts,
+		client:    &http.Client{Transport: roundTripper},
 	}, nil
 }
 
@@ -86,10 +97,6 @@ func (fs *nixHttpCacheFs) errorLog(msg string, e error) {
 	}
 }
 
-func (fs *nixHttpCacheFs) client() *http.Client {
-	return fs.opts.client
-}
-
 // getStoreDir retrieves the store directory from the cache if it is not already known.
 // This function will only use the *first* configured cacheUrl - it's a mistake to configure
 // multiple conflicting ones.
@@ -99,7 +106,7 @@ func (fs *nixHttpCacheFs) getStoreDir() string {
 		if err != nil {
 			return fs.storeDir
 		}
-		resp, err := fs.client().Do(req)
+		resp, err := fs.client.Do(req)
 		if err != nil {
 			return fs.storeDir
 		}
@@ -166,6 +173,7 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 	var result *ninfoWithOrigin
 	var errs error
 	isNinfoPath := lo.Ternary(hasExt, pathExt == "narinfo", false)
+
 	for _, cacheUrl := range fs.cacheUrls {
 		var ninfoUrl string
 		ninfoUrl = cacheUrl.JoinPath(fmt.Sprintf("%s.narinfo", shortPath)).String()
@@ -179,7 +187,7 @@ func (fs *nixHttpCacheFs) getNarInfo(name string) (*ninfoWithOrigin, error) {
 			continue
 		}
 
-		response, err := fs.client().Do(req)
+		response, err := fs.client.Do(req)
 		if err != nil {
 			errs = multierr.Append(errs, err)
 			continue
@@ -238,7 +246,7 @@ func (fs *nixHttpCacheFs) getNar(ninfo *ninfoWithOrigin) (*cachedFile, error) {
 			continue
 		}
 
-		resp, err := fs.client().Do(req)
+		resp, err := fs.client.Do(req)
 		if err != nil {
 			errs = multierr.Append(errs, err)
 			continue

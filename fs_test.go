@@ -9,8 +9,10 @@ import (
 	"path"
 	"testing"
 
+	"github.com/chigopher/pathlib"
 	"github.com/nix-community/go-nix/pkg/derivation"
 	"github.com/samber/lo"
+	"github.com/spf13/afero"
 	"github.com/wrouesnel/nix-sigman/pkg/nixtypes"
 	. "gopkg.in/check.v1"
 	"zombiezen.com/go/nix/nar"
@@ -161,4 +163,54 @@ func (s *FsSuite) TestReadNarInfo(c *C) {
 	ninfo := new(nixtypes.NarInfo)
 	err = ninfo.UnmarshalText(ninfoBytes)
 	c.Assert(err, IsNil)
+}
+
+type FsCacheSuite struct {
+	fs *nixHttpCacheFs
+}
+
+var _ = Suite(&FsCacheSuite{})
+
+func (s *FsCacheSuite) TestGetNarInfoAndNarFileWithCache(c *C) {
+	cacheDir := c.MkDir()
+	cachePath := pathlib.NewPath(cacheDir, pathlib.PathWithAfero(afero.NewOsFs()))
+
+	// Setup a new cache FS for this test
+	cacheUrl := lo.Must(url.Parse("https://cache.nixos.org/"))
+	fs, err := NewNixHttpCacheFs([]*url.URL{cacheUrl}, ErrorLogger(func(msg string) {
+		c.Logf("error: %s", msg)
+	}), DebugLogger(func(msg string) {
+		c.Logf("debug: %s", msg)
+	}), PersistentCache(cachePath))
+	c.Assert(err, IsNil)
+	s.fs = fs.(*nixHttpCacheFs)
+
+	ninfo, err := s.fs.getNarInfo(wellknownPublicPath)
+	c.Assert(err, IsNil)
+	c.Assert(ninfo, Not(IsNil))
+
+	narchive, err := s.fs.getNar(ninfo)
+	c.Assert(err, IsNil)
+	c.Assert(narchive, Not(IsNil))
+
+	// Let's check the nar is actually usable since it should be a locally cached object on
+	// disk now.
+	listing, err := nar.List(narchive)
+	c.Assert(err, IsNil)
+
+	narfs, err := nar.NewFS(narchive, listing)
+	c.Assert(err, IsNil)
+
+	dentries, err := narfs.ReadDir("lib")
+	c.Assert(err, IsNil)
+	for _, dentry := range dentries {
+		info, err := dentry.Info()
+		c.Assert(err, IsNil)
+		c.Logf("%v %v %v", dentry.Type().String(), info.Size(), dentry.Name())
+	}
+
+	// Run the fetch again to check cache paths work.
+	ninfo, err = s.fs.getNarInfo(wellknownPublicPath)
+	c.Assert(err, IsNil)
+	c.Assert(ninfo, Not(IsNil))
 }

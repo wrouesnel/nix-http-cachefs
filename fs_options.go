@@ -3,14 +3,16 @@ package nix_http_cachefs
 import (
 	"net/http"
 
+	"github.com/chigopher/pathlib"
 	"github.com/jdxcode/netrc"
 )
 
 type options struct {
-	netrcFile *netrc.Netrc
-	errorFn   func(msg string)
-	debugFn   func(msg string)
-	client    *http.Client
+	netrcFile       *netrc.Netrc
+	errorFn         func(msg string)
+	debugFn         func(msg string)
+	roundTripper    http.RoundTripper
+	persistentCache *pathlib.Path
 }
 
 type Opt func(opt *options)
@@ -43,8 +45,17 @@ func Netrc(netrcContent string) Opt {
 	}
 }
 
-func Client(client *http.Client) Opt {
+// RoundTripper allows replacing the HTTP transport
+func RoundTripper(roundTripper http.RoundTripper) Opt {
 	return func(opt *options) {
-		opt.client = client
+		opt.roundTripper = roundTripper
+	}
+}
+
+// PersistentCache specifies a writeable location where files from cache servers
+// will be persistently stored.
+func PersistentCache(path *pathlib.Path) Opt {
+	return func(opt *options) {
+		opt.persistentCache = path
 	}
 }
